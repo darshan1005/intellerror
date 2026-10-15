@@ -1,166 +1,191 @@
-# 🧠 IntellError
+# IntellError
 
-**Transform ugly JavaScript/Node.js stack traces into clean, readable, and actionable output. Designed for humans, not robots.**
+Production-grade error intelligence for enterprise JavaScript applications. IntellError turns thrown values into useful, structured diagnostics while protecting credentials and keeping the error path safe.
 
 [![npm version](https://img.shields.io/npm/v/intellerror.svg)](https://www.npmjs.com/package/intellerror)
-[![License: ISC](https://img.shields.io/badge/License-ISC-blue.svg)](https://opensource.org/licenses/ISC)
-[![Tests](https://img.shields.io/badge/tests-passing-brightgreen.svg)](https://github.com/darshan1005/IntellError)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-## ✨ Why IntellError?
+## What it provides
 
-Standard error logs are noisy, cluttered with `node_modules`, and lack context. **IntellError** gives you the "Why" and "How to Fix" instantly.
+- **Actionable diagnostics**: confidence-ranked suggestions for common JavaScript, Node.js, React, DOM, network and filesystem failures.
+- **Production-safe output**: bounded cause traversal, secret/PII redaction, stable fingerprints, status/code fields and JSON schema versioning.
+- **Useful stack traces**: hides Node internals and dependencies by default, supports bounded source-map enrichment in Node, and has opt-in source snapshots.
+- **Runtime-specific bundles**: a Node package entry, a browser/worker entry with no Node built-ins, and separate Node/browser registration adapters.
+- **Operational integrations**: Express error middleware, Slack/Discord-compatible webhooks with timeouts and HTTP status handling, and idempotent global registration.
+- **Enterprise controls**: immutable configuration snapshots, validation, cause-depth and payload limits, custom rules with safe unregister handles, and a single offline test command.
 
-- ❌ **Clean Stack Traces**: Auto-hides Node.js internals and collapses `node_modules` noise.
-- 📍 **Source Map Support**: Auto-translates minified/compiled code back to original TypeScript/Source locations.
-- 🔗 **Async Stack Chaining**: Recursively traverses `Error.cause` to show the full async story.
-- 💡 **Actionable Suggestions 2.0**: 100+ context-aware rules with confidence scoring.
-- 📸 **Code Snapshots**: See the exact line of code directly in your terminal (Node.js only).
-- 📊 **Observability Ready**: Includes **JSON Mode**, **Error Fingerprinting**, and **Severity Levels**.
-- 🌐 **Universal Runtime Support**: Native support for **Node.js**, **Bun**, **Deno**, and **Edge/Serverless**.
+## Requirements
 
----
+- Node.js 20 or newer for the root package, source maps, snapshots and the Node registration adapter.
+- Browser, worker and Edge-like environments should use the `intellerror/browser` entry. Browser registration uses `intellerror/register/browser`.
 
-## 🚀 Quick Start (Zero-Config)
+## Install
 
-Add this at the very top of your entry file to catch all unhandled errors automatically.
-
-### For Browser (React, Vite, Next.js)
-```typescript
-import 'intellerror/register';
-```
-
-### For Node.js / Bun / Deno
 ```bash
-# Node.js 20+
-node --import intellerror/register index.js
-
-# Bun
-bun index.ts  # (Auto-detected if you import it)
+npm install intellerror
 ```
 
----
+## Node usage
 
-## 🛠️ Advanced Features
-
-### 🤖 Machine-Readable JSON Mode
-Enable production logging that flows perfectly into Datadog, Splunk, or Loki.
-```typescript
-import { formatErrorJSON } from 'intellerror';
+```ts
+import { formatError, formatErrorJSON } from 'intellerror';
 
 try {
-  // your code
-} catch (err) {
-  console.log(formatErrorJSON(err));
+  await runJob();
+} catch (error) {
+  console.error(formatError(error));
+  // Send structured output to your logger or collector.
+  logger.error(JSON.parse(formatErrorJSON(error)));
 }
 ```
 
-### 🔗 Error Chaining (`Error.cause`)
-Never lose context again. IntellError recursively handles nested errors.
-```text
-  ERROR  Failed to fetch user from DB
-  2026-04-06T06:07:49.123Z | uptime: 12.5s | ID: a1b2c3d4
+For automatic Node process listeners:
 
-  🔗 Causes:
-  caused by: Error: Connection refused (timeout after 5000ms)
+```bash
+node --import intellerror/register dist/server.js
 ```
 
-### 📍 Source Map Integration
-If a `.map` file exists alongside your compiled script, IntellError will automatically show the original source location.
-```text
-📍 Location:
-src/users/service.ts:45:10 [mapped]   ← YOUR CODE
+Registration is idempotent, preserves warning arguments, never lets webhook failure replace the original error, and exposes `install()`/`uninstallRegistration()` for CLIs and tests. Unhandled rejections are logged but do not terminate the process unless configured.
+
+## Browser, worker and Edge usage
+
+The browser entry is intentionally separate so bundlers do not pull in `fs`, `path`, source-map file I/O or Node crypto:
+
+```ts
+import { formatErrorBrowser } from 'intellerror/browser';
+
+try {
+  renderApp();
+} catch (error) {
+  console.log(...formatErrorBrowser(error));
+}
 ```
 
----
+To install browser `error` and `unhandledrejection` listeners:
 
-## ⚙️ Configuration
+```ts
+import 'intellerror/register/browser';
+```
 
-Fine-tune the output or add your own project-specific intelligence.
+The browser adapter calls `preventDefault()` to avoid duplicate default reporting and works with `window`, workers and other `EventTarget`-compatible runtimes. Framework-specific Edge runtimes should connect their framework error hook to `formatErrorBrowser` or `formatErrorJSON` rather than installing Node process listeners.
 
-```typescript
+## Structured output and fingerprints
+
+`formatErrorJSON()` returns schema version `1` and includes:
+
+- `fingerprint`, severity, timestamp and uptime;
+- error type, code, HTTP status, redacted message and filtered frames;
+- bounded cause chains with their own filtered stacks;
+- location and ranked suggestions.
+
+Frame visibility settings apply consistently to text and JSON output. Fingerprints include the error category, code, normalized message and first user frame, while volatile numbers and long identifiers are normalized to reduce alert-cardinality noise.
+
+## Configuration
+
+```ts
 import { setupConfig } from 'intellerror';
 
 setupConfig({
-  showNodeModules: false,    // Hide noise?
-  showNodeInternals: false,  // Hide node internals?
-  suggestionsEnabled: true,  // Show the "💡 Suggestions"?
-  sourceMapsEnabled: true,   // Enable original source mapping?
-  webhookUrl: 'https://...'  // Push to Slack/Discord?
+  sourceMapsEnabled: true,
+  sourceRoots: [process.cwd()],
+  snapshotsEnabled: false, // opt in only for trusted local source roots
+  showNodeModules: false,
+  showNodeInternals: false,
+  redactSensitiveData: true,
+  maxCauseDepth: 16,
+  webhookUrl: process.env.INTELLERROR_WEBHOOK_URL,
+  webhookTimeoutMs: 3000,
 });
 ```
 
----
+`getConfig()` returns a defensive snapshot. Invalid values throw a `TypeError`; `resetConfig()` restores environment-derived defaults. Redaction is enabled by default and covers bearer tokens, JWTs, credential query parameters, common secret key/value pairs, emails and common local paths.
 
-## 📖 Manual Usage
+### Environment variables
 
-### Terminal / Node.js
-```typescript
-import { formatError } from 'intellerror';
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `INTELLERROR_JSON` | `false` | Use JSON mode for Node registration. |
+| `INTELLERROR_SOURCE_MAPS` | `true` | Enable bounded adjacent `.map` lookup in Node. |
+| `INTELLERROR_SOURCE_ROOTS` | current directory | Comma-separated roots allowed for maps/snapshots. |
+| `INTELLERROR_SNAPSHOTS` | `false` | Enable bounded source snippets. |
+| `INTELLERROR_MAX_SNAPSHOT_BYTES` | `131072` | Maximum source file size read. |
+| `INTELLERROR_MAX_SNAPSHOT_LINE_LENGTH` | `400` | Maximum displayed source-line length. |
+| `INTELLERROR_MAX_CAUSE_DEPTH` | `16` | Maximum traversed `Error.cause` depth. |
+| `INTELLERROR_MAX_MESSAGE_LENGTH` | `8000` | Maximum logged message length. |
+| `INTELLERROR_REDACTION` | `true` | Set to `false` only when a separate data policy exists. |
+| `INTELLERROR_SHOW_MODULES` | `false` | Include `node_modules` frames. |
+| `INTELLERROR_SHOW_INTERNALS` | `false` | Include Node internal frames. |
+| `INTELLERROR_SUGGESTIONS` | `true` | Enable intelligent suggestions. |
+| `INTELLERROR_SEARCH_LINKS` | `true` | Add redacted troubleshooting links. |
+| `INTELLERROR_INTERCEPT_WARNINGS` | `false` | Format string warnings in Node registration. |
+| `INTELLERROR_WEBHOOK_URL` | unset | Deliver a redacted alert to Slack, Discord or a generic webhook. |
+| `INTELLERROR_WEBHOOK_TIMEOUT_MS` | `3000` | Abort webhook delivery after this limit. |
+| `INTELLERROR_EXIT_ON_UNCAUGHT` | `true` | Set `process.exitCode` after an uncaught exception. |
+| `INTELLERROR_EXIT_ON_REJECTION` | `false` | Set `process.exitCode` for unhandled rejections. |
 
-try {
-  // your code...
-} catch (err) {
-  console.log(formatError(err)); 
-}
-```
+## Express
 
-### Browser Console (React/Vite)
-```typescript
-import { formatErrorBrowser } from 'intellerror';
+Messages are not exposed to clients by default, and errors after headers are sent are delegated to Express:
 
-try {
-  // ...
-} catch (err) {
-  // MUST use the spread operator (...) for CSS styling
-  console.log(...formatErrorBrowser(err));
-}
-```
-
----
-
-## 🚅 Framework Integration
-
-### Express Middleware
-```typescript
-import express from 'express';
+```ts
 import { errorFormatter } from 'intellerror';
 
-const app = express();
 app.use(errorFormatter());
+// Only enable this for an intentionally trusted/internal API:
+// app.use(errorFormatter({ exposeMessage: true }));
 ```
 
----
+The middleware validates status codes, includes a safe error code when present, and accepts a logger callback for structured application logging.
 
----
+## Webhooks
 
-## 🌍 Environment Variables (Zero-Config)
-You can configure IntellError without changing a single line of code using environment variables.
+```ts
+import { sendWebhookNotification } from 'intellerror';
 
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `INTELLERROR_JSON` | `false` | Enable structured JSON output for all unhandled errors. |
-| `INTELLERROR_SOURCE_MAPS` | `true` | Enable/disable original source mapping via `.map` files. |
-| `INTELLERROR_SUGGESTIONS` | `true` | Show the "💡 Suggestions" section. |
-| `INTELLERROR_SHOW_MODULES` | `false` | Show `node_modules` frames in the stack trace. |
-| `INTELLERROR_SHOW_INTERNALS` | `false` | Show Node.js internal frames in the stack trace. |
-| `INTELLERROR_SEARCH_LINKS` | `true` | Show troubleshooting links. |
+const result = await sendWebhookNotification(error, {
+  url: process.env.INTELLERROR_WEBHOOK_URL,
+  timeoutMs: 2000,
+});
+if (!result.sent) console.warn('Alert delivery failed:', result.error);
+```
 
----
+Discord receives `content`; Slack and generic endpoints receive `text`. Invalid URLs, non-2xx responses, unavailable `fetch`, network failures and timeouts are represented in the result and never thrown from an exception handler.
 
-## 🎮 Examples
-Explore the `examples/` directory for ready-to-run demos:
-- `npm run example:basic`
-- `npm run example:async`
-- `npm run example:advanced` (New: Chaining & JSON mode)
+## Custom intelligence
 
----
+```ts
+import { registerRule } from 'intellerror';
 
-## 📄 License
-MIT © [darshan1005](https://github.com/darshan1005)
+const unregister = registerRule({
+  match: (error) => error.message.includes('tenant quota'),
+  message: 'Tenant quota exceeded.',
+  confidence: 0.95,
+  fix: 'Review quota usage or request a capacity increase.',
+});
 
----
+// unregister(); when the rule is scoped to a plugin or test
+```
 
-## 🤝 Contributing
-IntellError is open for contributions! Whether it's adding new suggestion rules, improving the parser, or adding more framework integrations, feel free to open a PR or Issue on [GitHub](https://github.com/darshan1005/IntellError).
+Custom rules are validated, sorted by confidence and isolated when a rule throws.
 
-*Built with humans in mind.*
+## Development and release checks
+
+This repository pins Node in `.nvmrc`, keeps a lockfile, builds every published entry, and runs the same checks in CI and locally:
+
+```bash
+npm ci
+npm test             # complete Vitest suite; works offline after npm ci
+npm run build        # ESM/CJS bundles and declarations
+npm run check        # build, test and npm pack --dry-run
+```
+
+`npm pack` runs the build automatically through `prepack`, and the package `files` allowlist ensures the published tarball contains every declared export target. A reproducible Docker build is also provided:
+
+```bash
+docker build -t intellerror .
+docker run --rm intellerror
+```
+
+## License
+
+MIT © Darshan Battula

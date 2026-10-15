@@ -5,7 +5,7 @@ describe('Parser', () => {
   it('should identify node built-in modules correctly', () => {
     const error = new Error('test');
     error.stack = `Error: test
-    at Object.<anonymous> (fs.js:1:1)
+    at Object.<anonymous> (node:fs:1:1)
     at Module._compile (node:internal/modules/cjs/loader:1101:14)
     at Object.Module._extensions..js (node:internal/modules/cjs/loader:1153:10)
     at Module.load (node:internal/modules/cjs/loader:981:32)
@@ -14,7 +14,7 @@ describe('Parser', () => {
     at node:internal/main/run_main_module:17:47`;
 
     const frames = parseStack(error);
-    expect(frames[0].isNodeInternal).toBe(true); // fs.js
+    expect(frames[0].isNodeInternal).toBe(true); // node:fs
     expect(frames[1].isNodeInternal).toBe(true); // node:internal/...
     expect(frames[6].isNodeInternal).toBe(true); // node:internal/...
   });
@@ -27,7 +27,7 @@ describe('Parser', () => {
 
     const frames = parseStack(error);
     expect(frames[0].isNodeInternal).toBe(false); // index.ts is user code
-    expect(frames[1].isNodeInternal).toBe(true); // loader.js is internal
+    expect(frames[1].isNodeInternal).toBe(false); // a user file can be called loader.js
   });
 
   it('should traverse Error.cause correctly', () => {
@@ -47,5 +47,17 @@ describe('Parser', () => {
 
     const frames = parseStack(error);
     expect(frames[0].methodName).toBe('<unknown>');
+  });
+
+  it('should terminate circular causes and cap deep cause chains', () => {
+    const first = new Error('first');
+    const second = new Error('second');
+    first.cause = second;
+    second.cause = first;
+    expect(getErrorChain(first)).toHaveLength(2);
+
+    let current = new Error('leaf');
+    for (let index = 0; index < 100; index += 1) current = new Error(`level-${index}`, { cause: current });
+    expect(getErrorChain(current).length).toBeLessThanOrEqual(16);
   });
 });

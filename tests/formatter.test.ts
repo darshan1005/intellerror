@@ -1,7 +1,10 @@
-import { describe, it, expect } from 'vitest';
+import { afterEach, describe, it, expect } from 'vitest';
 import { formatError, formatErrorJSON } from '../src/formatter/index.js';
+import { resetConfig, setupConfig } from '../src/config.js';
 
 describe('Formatter', () => {
+  afterEach(() => resetConfig());
+
   it('should format errors with severity levels', () => {
     const error = new Error('Fatal failure');
     (error as any).severity = 'FATAL';
@@ -40,5 +43,25 @@ describe('Formatter', () => {
     
     expect(json.error.causes).toHaveLength(1);
     expect(json.error.causes[0].message).toBe('Root cause');
+  });
+
+  it('redacts secrets from human and JSON output', () => {
+    const error = new Error('request failed Bearer production-secret-token for jane@example.com {"password":"json-secret"}');
+    error.stack = `Error: Bearer production-secret-token\n    at handler (/srv/company/private-service.ts:1:1)`;
+
+    expect(formatError(error)).not.toContain('production-secret-token');
+    expect(formatError(error)).not.toContain('jane@example.com');
+    expect(formatErrorJSON(error)).not.toContain('production-secret-token');
+    expect(formatErrorJSON(error)).not.toContain('json-secret');
+    expect(formatError(error)).not.toContain('/srv/company/private-service.ts');
+  });
+
+  it('applies frame visibility to JSON and supports non-Error values', () => {
+    setupConfig({ showNodeModules: false, showNodeInternals: false });
+    const error = new Error('visibility');
+    error.stack = `Error: visibility\n    at user (/workspace/app.ts:1:1)\n    at dep (/workspace/node_modules/pkg/index.js:2:1)\n    at core (node:internal/timers:3:1)`;
+    const json = JSON.parse(formatErrorJSON(error));
+    expect(json.error.stack).toHaveLength(1);
+    expect(JSON.parse(formatErrorJSON('plain failure')).error.message).toBe('plain failure');
   });
 });

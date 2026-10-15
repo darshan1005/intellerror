@@ -1,8 +1,12 @@
-/**
- * Generates search URLs for a given error based on its message and type.
- */
-export function getSearchLinks(error: Error): string[] {
-  const query = encodeURIComponent(`${error.constructor.name}: ${error.message}`);
+import { getErrorMessage, getErrorName } from '../error.js';
+import { redactSensitiveData } from '../redaction.js';
+
+/** Generate useful troubleshooting links without sending raw credentials or PII. */
+export function getSearchLinks(error: unknown): [string, string, string] {
+  const queryText = redactSensitiveData(`${getErrorName(error)}: ${getErrorMessage(error)}`, 240)
+    .replace(/\s+/g, ' ')
+    .trim();
+  const query = encodeURIComponent(queryText);
   
   return [
     `https://www.google.com/search?q=${query}`,

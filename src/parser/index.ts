@@ -1,8 +1,6 @@
 import * as stackTraceParser from 'stacktrace-parser';
-import fs from 'fs';
-import path from 'path';
-import { SourceMapConsumer } from 'source-map-js';
 import { getConfig } from '../config.js';
+import { getErrorCause, isErrorLike, normalizeError, readProperty } from '../error.js';
 
 export interface ParsedStackFrame {
   file: string | null;
@@ -21,82 +19,63 @@ export interface ErrorChain {
   frames: ParsedStackFrame[];
 }
 
-// Last updated: Node.js v22. Source:
-// https://nodejs.org/api/module.html#modulebuiltinmodules
-const NODE_BUILTINS = new Set([
-  'assert', 'async_hooks', 'buffer', 'child_process', 'cluster', 'console',
-  'constants', 'crypto', 'dgram', 'diagnostics_channel', 'dns', 'domain',
-  'events', 'fs', 'http', 'http2', 'https', 'inspector', 'loader', 'module', 'net',
-  'os', 'path', 'perf_hooks', 'process', 'punycode', 'querystring', 'readline',
-  'repl', 'stream', 'string_decoder', 'sys', 'timers', 'tls', 'trace_events',
-  'tty', 'url', 'util', 'v8', 'vm', 'worker_threads', 'zlib'
-]);
-
-export function parseStack(error: Error): ParsedStackFrame[] {
-  if (!error.stack) return [];
-  
-  const parsed = stackTraceParser.parse(error.stack);
-  
-  return parsed.map(frame => {
-    const file = frame.file || '';
-    
-    const isNodeInternal = 
-      file.startsWith('node:') || 
-      file.startsWith('internal/') ||
-      NODE_BUILTINS.has(file.replace(/\.js$/, '').replace(/^node:/, ''));
-      
-    const isNodeModule = file.includes('node_modules');
-
-    const result: ParsedStackFrame = {
-      file: frame.file,
-      methodName: frame.methodName || '<unknown>',
-      lineNumber: frame.lineNumber,
-      column: frame.column,
-      isNodeInternal: Boolean(isNodeInternal),
-      isNodeModule: Boolean(isNodeModule)
-    };
-
-    // Try to enrich with source maps (Node only, synchronous for now)
-    const config = getConfig();
-    if (config.sourceMapsEnabled && !isNodeInternal && !isNodeModule && frame.file && frame.lineNumber && frame.column) {
-        try {
-            const mapPath = `${frame.file}.map`;
-            if (fs.existsSync(mapPath)) {
-                const mapContent = fs.readFileSync(mapPath, 'utf-8');
-                const consumer = new SourceMapConsumer(JSON.parse(mapContent));
-                const original = consumer.originalPositionFor({
-                    line: frame.lineNumber,
-                    column: frame.column
-                });
-                
-                if (original.source) {
-                    result.originalFile = original.source;
-                    result.originalLineNumber = original.line;
-                    result.originalColumn = original.column;
-                }
-            }
-        } catch (e) {
-            // Silently ignore source map errors
-        }
-    }
-
-    return result;
-  });
+function getStack(error: unknown): string | undefined {
+  const stack = readProperty(error, 'stack');
+  return typeof stack === 'string' ? stack : undefined;
 }
 
-export function getErrorChain(error: Error): ErrorChain[] {
-    const chain: ErrorChain[] = [];
-    let currentError: Error | undefined = error;
-    
-    while (currentError) {
-        chain.push({
-            error: currentError,
-            frames: parseStack(currentError)
-        });
-        
-        // Handle Error.cause (Node 16.9+, modern browsers)
-        currentError = (currentError as any).cause instanceof Error ? (currentError as any).cause : undefined;
-    }
-    
-    return chain;
+function isNodeInternalFile(file: string): boolean {
+  const normalized = file.replace(/\\/g, '/');
+  return normalized.startsWith('node:') || normalized.startsWith('internal/') || normalized.includes('/node:internal/');
+}
+
+function isNodeModuleFile(file: string): boolean {
+  return /(^|[\\/])node_modules([\\/]|$)/.test(file);
+}
+
+/** Parse only standard stack text. This module intentionally has no Node imports. */
+export function parseStack(error: unknown): ParsedStackFrame[] {
+  const stack = getStack(error);
+  if (!stack) return [];
+
+  try {
+    const parsed = stackTraceParser.parse(stack);
+    return parsed.map((frame) => {
+      const file = frame.file || '';
+      return {
+        file: frame.file || null,
+        methodName: frame.methodName || '<unknown>',
+        lineNumber: typeof frame.lineNumber === 'number' ? frame.lineNumber : null,
+        column: typeof frame.column === 'number' ? frame.column : null,
+        isNodeInternal: isNodeInternalFile(file),
+        isNodeModule: isNodeModuleFile(file),
+      };
+    });
+  } catch {
+    return [];
+  }
+}
+
+export function getErrorChain(error: unknown, parser: (value: unknown) => ParsedStackFrame[] = parseStack): ErrorChain[] {
+  const chain: ErrorChain[] = [];
+  const seen = new WeakSet<object>();
+  let current: unknown = error;
+  const maxDepth = getConfig().maxCauseDepth;
+
+  for (let depth = 0; current !== undefined && depth < maxDepth; depth += 1) {
+    const identity = (typeof current === 'object' && current !== null) || typeof current === 'function'
+      ? current as object
+      : undefined;
+    if (identity && seen.has(identity)) break;
+    if (identity) seen.add(identity);
+
+    const normalized = normalizeError(current);
+    chain.push({ error: normalized, frames: parser(normalized) });
+
+    const cause = getErrorCause(current);
+    if (!isErrorLike(cause)) break;
+    current = cause;
+  }
+
+  return chain;
 }

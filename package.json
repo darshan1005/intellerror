@@ -1,26 +1,47 @@
 {
   "name": "intellerror",
-  "version": "1.1.0",
-  "description": "Intelligent error formatting for Node.js and Browser. Transforms ugly stack traces into clean, readable, and actionable output with smart code suggestions.",
+  "version": "1.2.0",
+  "description": "Production-grade, privacy-conscious error intelligence for Node.js, browsers, workers and enterprise observability pipelines.",
   "type": "module",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js",
+      "require": "./dist/browser.cjs"
+    },
     "./register": {
+      "types": "./dist/register.d.ts",
       "import": "./dist/register.js",
       "require": "./dist/register.cjs"
+    },
+    "./register/browser": {
+      "types": "./dist/register-browser.d.ts",
+      "import": "./dist/register-browser.js",
+      "require": "./dist/register-browser.cjs"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup",
     "postbuild": "tsc --emitDeclarationOnly",
+    "prepack": "npm run build",
     "dev": "tsup --watch",
-    "test": "tsx test.ts",
+    "test": "npm run test:unit",
     "test:unit": "vitest run",
+    "test:package": "tsx scripts/package-smoke.ts",
+    "check": "npm run build && npm test && npm run test:package && npm pack --dry-run",
     "example:basic": "tsx examples/basic-usage.ts",
     "example:async": "tsx examples/async-error.ts",
     "example:custom": "tsx examples/custom-error.ts",
@@ -42,20 +63,21 @@
     "vite",
     "suggestions"
   ],
-  "author": "",
-  "license": "ISC",
+  "author": "Darshan Battula",
+  "license": "MIT",
   "bugs": {
     "url": "https://github.com/darshan1005/IntellError/issues"
   },
   "homepage": "https://github.com/darshan1005/IntellError#readme",
   "dependencies": {
     "chalk": "^5.6.2",
-    "diff": "^8.0.4",
     "source-map-js": "^1.2.1",
     "stacktrace-parser": "^0.1.11"
   },
+  "engines": {
+    "node": ">=20"
+  },
   "devDependencies": {
-    "@types/express": "^5.0.6",
     "@types/node": "^25.5.0",
     "tsup": "^8.5.1",
     "tsx": "^4.21.0",
